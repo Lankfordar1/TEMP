@@ -740,3 +740,98 @@ a segment.
    `render_report.py` fills the hook from the comps table each period.
 7. **Secrets in `.env`, data files gitignored, definitions in config, logic in `src/`.**
 
+---
+Repo Decoder Skill
+---
+---
+name: "databricks-repo-decoder"
+description: "Use when asked to explain, map, reverse engineer, or repurpose a cloned Python/Databricks GitLab repo: flags Databricks code, builds a flow chart and plain-English code walkthrough."
+---
+
+# Databricks Repo Decoder
+
+Purpose: let the user understand a cloned Python repository (usually from GitLab, usually built for Databricks) without opening every file, so they can replicate or repurpose the core logic outside Databricks. This is informational only.
+
+## Ground rules (read first)
+
+- **Read only.** Never edit, move, or delete anything in the cloned repo. "Commenting out" happens in the copy of the code shown in the HTML output, not in the repo files.
+- **Run nothing from the repo.** No scripts, notebooks, tests, installs, CI, or jobs. Reading files and searching text is all this skill needs.
+- **No contact with Databricks or any remote.** No Databricks CLI, SDK, or API calls, no tokens, no git fetch, pull, or push. Nothing is pulled from or posted to Databricks.
+- **Create only the one HTML file below, in a temp folder.** Anything else (a cleaned copy of the code, converted scripts, new files) waits until the user explicitly asks.
+- **Do not print secret values** (tokens, passwords, keys) found in the repo. Name the variable and where it lives.
+- **Do not guess.** If a file was not read, or behavior depends on something outside the repo (a table, a job setting, another repo), say so.
+
+## Step 1: Map the repo
+
+1. Read `README`, `pyproject.toml` / `setup.py` / `requirements.txt`, `.gitlab-ci.yml`, and any job or workflow definitions (`databricks.yml`, bundle resources, job JSON or YAML).
+2. Find the entry points: job tasks, notebooks (files starting with `# Databricks notebook source`), `main.py`, CLI commands.
+3. Work out the order of operations from job task order and dependencies, `%run` and `dbutils.notebook.run` chains, imports, and function calls.
+
+If the run order cannot be confirmed from the repo, show the best-supported order and label it as inferred.
+
+## Step 2: Flag Databricks-specific code
+
+Look for:
+
+| Type | Examples |
+|---|---|
+| Notebook markers | `# Databricks notebook source`, `# COMMAND ----------`, `# MAGIC`, `%run`, `%sql`, `%pip` |
+| Databricks utilities | `dbutils.secrets`, `dbutils.widgets`, `dbutils.fs`, `dbutils.notebook`, `display()` |
+| Reading data | `spark.read`, `spark.table`, `spark.sql("SELECT ...")`, DBFS or mount paths (`dbfs:/`, `/dbfs/`, `/mnt/`), `catalog.schema.table` names |
+| Writing data | `.write`, `.saveAsTable`, `INSERT` / `MERGE` / `CREATE TABLE`, Delta table operations, `dbutils.fs.put` / `cp` / `rm` |
+| Platform services | `databricks-sdk`, `databricks-connect`, MLflow tracking or model registry, job and cluster configs, CI deploy steps |
+
+For each flagged section record:
+
+- File and line range
+- What it does
+- Why it is there
+- Direction: **PULLS IN** data, **PUSHES OUT** data, or **runtime only**
+- What the rest of the code needs from it (so the user knows what to replace)
+
+Plain PySpark transformation logic (joins, filters, aggregations) is core project logic. Keep it and translate it, and note that it needs a Spark session to run.
+
+## Step 3: Build the repo map
+
+Create a temp folder (`mktemp -d` or the OS temp directory) and write one file there: `repo_map.html`. Make it self-contained: inline CSS and a small inline script, no external scripts, fonts, or CDN links, so opening it loads nothing from the network.
+
+Write for a reader who does not work with code or data. The page should make sense to them without opening any technical section.
+
+### Look and feel: Obsidian graph view
+
+- Follow Obsidian's default theme: dark and light via `prefers-color-scheme`, neutral grays, one purple accent, system sans-serif font.
+- **Graph:** circles joined by thin lines, drawn as inline SVG with a fixed layout that fits a phone screen.
+  - Group the run into 4 to 7 **stages**. Each stage is a large lettered circle (A, B, C...) with a short label under it, joined in run order by arrows.
+  - Each **step** is a small numbered circle attached to its stage.
+  - Mark steps with a colored ring and a legend: Databricks, uses the internet, saves a file locally.
+  - Tapping a circle highlights it and its links, fades the rest, and opens its note.
+- **Notes:** one per stage and step, shown one at a time beside or below the graph, styled like an Obsidian note: title, `#tag` pills, purple internal links, callout boxes, and previous/next links that walk the run in order.
+- If scripts are disabled, all notes should show in order.
+
+### Page order
+
+1. Title and two plain sentences on what the repo does.
+2. Three status chips with counts: Databricks code, uses the internet, saves files locally.
+3. The graph and the note panel. The opening note is "Start here": the whole run as one line per stage.
+4. "Read in order": an outline of every stage and step as links.
+5. "What leaves or lands on your computer", including a summary of every flagged Databricks section from Step 2.
+6. "Not confirmed from the code" and a one-paragraph scope note.
+
+### What each step note contains
+
+- **Title:** the step number and 3 to 5 plain words (an action, not a function name).
+- **What happens:** one to three short sentences. No jargon; if a technical term is needed, explain it in the same sentence.
+- **If it goes wrong:** one sentence in a callout, only when the step has a branch or error path.
+- **Good to know:** a callout for anything the reader would act on. Every Databricks section gets one: what it does, why it is there, and what would need to replace it.
+- **For the technical reader** (collapsed): file and line ranges, short technical notes, and the original code with every Databricks-specific line commented out and prefixed `# [DATABRICKS - DISABLED]`.
+
+For notebooks, the `# COMMAND ----------` cell breaks are natural step boundaries. Group small related cells into one step.
+
+For a large repo (roughly 30 or more scripts), map one main path first (the main entry point or the README's example), say what was left out, then ask which other scripts to add.
+
+## Step 4: Hand off and clean up
+
+- Give the user the file (or its path) with a short summary: what the repo does, how many Databricks sections were flagged, and anything that could not be determined.
+- Then stop and wait for direction. Do not start rewriting or converting code.
+- Delete the temp folder when the user says they are done, or at the end of the session. If deletion cannot be confirmed, tell the user the path so they can remove it.
+
